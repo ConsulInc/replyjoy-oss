@@ -18,7 +18,7 @@ vi.mock("../lib/env.js", () => ({
   env: {
     FRONTEND_URL: "http://localhost:5173",
     RESEND_API_KEY: "resend_test_key", // pragma: allowlist secret
-    SUPPORT_TO_EMAIL: "derek@consulinc.us",
+    SUPPORT_TO_EMAIL: "team@consulinc.us",
     SUPPORT_FROM_EMAIL: "support@consulinc.us",
   },
 }));
