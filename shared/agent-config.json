@@ -1,0 +1,7 @@
+{
+  "providers": ["gemini"],
+  "defaultModels": {
+    "gemini": "gemini-3-flash-preview"
+  },
+  "lookbacks": ["1d", "2d", "3d", "4d", "5d"]
+}

@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+.DS_Store
+.turbo
+.vite
+coverage
+.env
+.env.*
+!.env.example
+.playwright-mcp
+*.tsbuildinfo
+frontend/dist
+backend/dist

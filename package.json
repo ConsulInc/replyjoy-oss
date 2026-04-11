@@ -1,0 +1,19 @@
+{
+  "name": "replyjoy",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm --workspace backend run dev\" \"npm --workspace frontend run dev\"",
+    "build": "npm --workspace backend run build && npm --workspace frontend run build",
+    "lint": "npm --workspace backend run typecheck && npm --workspace frontend run typecheck",
+    "db:push": "npm --workspace backend run db:push",
+    "test": "npm --workspace backend run test && npm --workspace frontend run test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

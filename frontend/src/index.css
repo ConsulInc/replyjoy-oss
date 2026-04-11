@@ -1,0 +1,54 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    font-family: "Inter", sans-serif;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 24%),
+      radial-gradient(circle at 100% 0%, rgba(14, 165, 233, 0.08), transparent 18%),
+      linear-gradient(180deg, #f8fbff 0%, #f8fafc 38%, #f6f8fc 100%);
+    background-size: auto, auto, auto;
+    background-position: 0 0, 0 0, 0 0;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  ::selection {
+    background: rgba(59, 130, 246, 0.2);
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  a {
+    @apply transition-colors duration-150;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
