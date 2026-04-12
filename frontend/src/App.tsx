@@ -8,6 +8,7 @@ import { DraftsPage } from "./routes/drafts-page";
 import { LandingPage } from "./routes/landing-page";
 import { PrivacyPolicyPage } from "./routes/privacy-policy-page";
 import { SettingsPage } from "./routes/settings-page";
+import { TermsOfServicePage } from "./routes/terms-of-service-page";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/privacy" element={<PrivacyPolicyPage />} />
+        <Route path="/terms" element={<TermsOfServicePage />} />
         <Route path="/app" element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="drafts" element={<DraftsPage />} />

@@ -95,9 +95,12 @@ export function LandingPage() {
           ))}
         </section>
 
-        <footer className="mt-10 flex justify-center pb-4 text-sm text-muted-foreground">
+        <footer className="mt-10 flex items-center justify-center gap-4 pb-4 text-sm text-muted-foreground">
           <Link className="underline underline-offset-4 transition hover:text-foreground" to="/privacy">
             Privacy Policy
+          </Link>
+          <Link className="underline underline-offset-4 transition hover:text-foreground" to="/terms">
+            Terms of Service
           </Link>
         </footer>
       </div>
