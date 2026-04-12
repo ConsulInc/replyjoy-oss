@@ -59,6 +59,7 @@ describe("runAutonomousAgent", () => {
         labelIds: ["SENT"],
       },
     ]);
+    const checkCalendarAvailability = vi.fn();
     const searchAttachments = vi.fn().mockResolvedValue([
       {
         messageId: "msg_attachment",
@@ -158,6 +159,7 @@ describe("runAutonomousAgent", () => {
       draftingRules: ["Draft concise, warm, useful replies."],
       candidates,
       readThread,
+      checkCalendarAvailability,
       searchMailbox,
       searchAttachments,
       readMessage,
@@ -203,6 +205,7 @@ describe("runAutonomousAgent", () => {
 
   it("caps mailbox context reads at thirty messages", async () => {
     const readThread = vi.fn();
+    const checkCalendarAvailability = vi.fn();
     const searchMailbox = vi.fn();
     const searchAttachments = vi.fn();
     const readMessage = vi.fn().mockImplementation(async (messageId: string) => ({
@@ -248,6 +251,7 @@ describe("runAutonomousAgent", () => {
       draftingRules: ["Draft concise, warm, useful replies."],
       candidates: [],
       readThread,
+      checkCalendarAvailability,
       searchMailbox,
       searchAttachments,
       readMessage,
@@ -288,6 +292,7 @@ describe("runAutonomousAgent", () => {
         },
       ],
     });
+    const checkCalendarAvailability = vi.fn();
     const searchMailbox = vi.fn();
     const searchAttachments = vi.fn();
     const readMessage = vi.fn();
@@ -321,6 +326,7 @@ describe("runAutonomousAgent", () => {
       draftingRules: ["Draft concise, warm, useful replies."],
       candidates,
       readThread,
+      checkCalendarAvailability,
       searchMailbox,
       searchAttachments,
       readMessage,
@@ -365,6 +371,170 @@ describe("runAutonomousAgent", () => {
           text: "Can you help with pricing?",
         }),
       ],
+    });
+  });
+
+  it("can inspect the calendar and return open slots before drafting a scheduling reply", async () => {
+    const candidates: Candidate[] = [
+      {
+        gmailThreadId: "thread_789",
+        gmailHistoryId: "history_789",
+        subject: "Meeting tomorrow?",
+        snippet: "Could we meet at 1pm tomorrow?",
+        fromEmail: "casey@example.com",
+        fromName: "Casey",
+        latestMessageAt: "2026-04-07T10:00:00.000Z",
+        latestMessageId: "msg_calendar",
+        hasUnread: true,
+      },
+    ];
+    const readThread = vi.fn().mockResolvedValue({
+      threadId: "thread_789",
+      snippet: "Current scheduling thread",
+      messages: [
+        {
+          gmailMessageId: "msg_calendar",
+          date: "2026-04-07T10:00:00.000Z",
+          from: "Casey <casey@example.com>",
+          to: "me@example.com",
+          subject: "Meeting tomorrow?",
+          messageId: "<msg_calendar@example.com>",
+          references: null,
+          text: "Could we meet at 1pm tomorrow?",
+        },
+      ],
+    });
+    const checkCalendarAvailability = vi.fn().mockResolvedValue({
+      calendarId: "primary",
+      start: "2026-04-08T19:00:00.000Z",
+      end: "2026-04-09T01:00:00.000Z",
+      query: null,
+      events: [
+        {
+          id: "evt_123",
+          calendarId: "primary",
+          status: "confirmed",
+          summary: "Existing customer call",
+          description: "Busy",
+          location: null,
+          organizer: "me@example.com",
+          creator: "me@example.com",
+          attendees: ["customer@example.com"],
+          start: "2026-04-08T20:00:00.000Z",
+          end: "2026-04-08T21:00:00.000Z",
+          isAllDay: false,
+          transparency: "opaque",
+          hangoutLink: null,
+        },
+      ],
+      openSlots: [
+        {
+          start: "2026-04-08T19:00:00.000Z",
+          end: "2026-04-08T20:00:00.000Z",
+          minutes: 60,
+        },
+        {
+          start: "2026-04-08T21:00:00.000Z",
+          end: "2026-04-09T01:00:00.000Z",
+          minutes: 240,
+        },
+      ],
+    });
+    const searchMailbox = vi.fn();
+    const searchAttachments = vi.fn();
+    const readMessage = vi.fn();
+
+    askGeminiFunctionCallWithUsage
+      .mockResolvedValueOnce({
+        functionCall: {
+          name: "read_thread",
+          args: {
+            threadId: "thread_789",
+            reason: "Read the scheduling request first.",
+          },
+        },
+        content: { role: "model", parts: [{ functionCall: { name: "read_thread", args: { threadId: "thread_789", reason: "Read the scheduling request first." } } }] },
+        estimatedCostUsd: 0.01,
+      })
+      .mockResolvedValueOnce({
+        functionCall: {
+          name: "check_calendar_availability",
+          args: {
+            start: "2026-04-08T19:00:00.000Z",
+            end: "2026-04-09T01:00:00.000Z",
+            reason: "Check whether 1pm tomorrow is actually free before drafting.",
+          },
+        },
+        content: {
+          role: "model",
+          parts: [
+            {
+              functionCall: {
+                name: "check_calendar_availability",
+                args: {
+                  start: "2026-04-08T19:00:00.000Z",
+                  end: "2026-04-09T01:00:00.000Z",
+                  reason: "Check whether 1pm tomorrow is actually free before drafting.",
+                },
+              },
+            },
+          ],
+        },
+        estimatedCostUsd: 0.02,
+      })
+      .mockResolvedValueOnce({
+        functionCall: {
+          name: "create_draft",
+          args: {
+            threadId: "thread_789",
+            draft:
+              "Hi Casey,\n\n1pm tomorrow is booked on my end. I can do tomorrow at 2pm instead if that works for you.\n",
+            reason: "Offer the next open slot from the calendar.",
+          },
+        },
+        content: {
+          role: "model",
+          parts: [
+            {
+              functionCall: {
+                name: "create_draft",
+                args: {
+                  threadId: "thread_789",
+                  draft:
+                    "Hi Casey,\n\n1pm tomorrow is booked on my end. I can do tomorrow at 2pm instead if that works for you.\n",
+                  reason: "Offer the next open slot from the calendar.",
+                },
+              },
+            },
+          ],
+        },
+        estimatedCostUsd: 0.03,
+      });
+
+    const result = await runAutonomousAgent({
+      provider: "gemini",
+      model: "gemini-3-flash-preview",
+      draftingRules: ["Check availability before committing to a time."],
+      candidates,
+      readThread,
+      checkCalendarAvailability,
+      searchMailbox,
+      searchAttachments,
+      readMessage,
+    });
+
+    expect(checkCalendarAvailability).toHaveBeenCalledWith({
+      start: "2026-04-08T19:00:00.000Z",
+      end: "2026-04-09T01:00:00.000Z",
+      calendarId: "primary",
+      query: undefined,
+      maxResults: undefined,
+    });
+    expect(result.drafted.get("thread_789")?.draft).toContain("tomorrow at 2pm");
+    expect(result.threadResults.get("thread_789")).toEqual({
+      decision: "drafted",
+      reason: "Offer the next open slot from the calendar.",
+      costUsd: 0.06,
     });
   });
 });

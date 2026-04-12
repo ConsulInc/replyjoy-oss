@@ -2,12 +2,19 @@ import { google } from "googleapis";
 
 import { env } from "../lib/env.js";
 
-const GMAIL_REQUEST_TIMEOUT_MS = 20_000;
+const GOOGLE_API_REQUEST_TIMEOUT_MS = 20_000;
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/calendar.readonly",
 ];
+
+type GoogleTokens = {
+  refreshToken: string;
+  accessToken?: string | null;
+  expiryDate?: number | null;
+};
 
 export function createOAuthClient() {
   return new google.auth.OAuth2(
@@ -17,11 +24,7 @@ export function createOAuthClient() {
   );
 }
 
-export function createGmailClient(tokens: {
-  refreshToken: string;
-  accessToken?: string | null;
-  expiryDate?: number | null;
-}) {
+function createAuthorizedOAuthClient(tokens: GoogleTokens) {
   const oauthClient = createOAuthClient();
   oauthClient.setCredentials({
     refresh_token: tokens.refreshToken,
@@ -29,10 +32,26 @@ export function createGmailClient(tokens: {
     expiry_date: tokens.expiryDate ?? undefined,
   });
 
+  return oauthClient;
+}
+
+export function createGmailClient(tokens: GoogleTokens) {
+  const oauthClient = createAuthorizedOAuthClient(tokens);
+
   return google.gmail({
     version: "v1",
     auth: oauthClient,
-    timeout: GMAIL_REQUEST_TIMEOUT_MS,
+    timeout: GOOGLE_API_REQUEST_TIMEOUT_MS,
+  });
+}
+
+export function createCalendarClient(tokens: GoogleTokens) {
+  const oauthClient = createAuthorizedOAuthClient(tokens);
+
+  return google.calendar({
+    version: "v3",
+    auth: oauthClient,
+    timeout: GOOGLE_API_REQUEST_TIMEOUT_MS,
   });
 }
 

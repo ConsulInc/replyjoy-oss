@@ -12,7 +12,7 @@ import {
   threadRunResults,
   userSettings,
 } from "../db/schema.js";
-import { createGmailClient } from "../gmail/client.js";
+import { createCalendarClient, createGmailClient } from "../gmail/client.js";
 import { buildReplyRaw, extractThreadText, getHeader } from "../gmail/mime.js";
 import { decryptSecret } from "../lib/crypto.js";
 import { createId } from "../lib/id.js";
@@ -41,6 +41,8 @@ const MAX_AGENT_CONTEXT_MESSAGES = 30;
 const MAX_AGENT_MESSAGE_TEXT_CHARS = 4_000;
 const MAX_AGENT_ATTACHMENTS_PER_DRAFT = 3;
 const MAX_AGENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_AGENT_CALENDAR_WINDOW_DAYS = 14;
+const MAX_AGENT_CALENDAR_EVENTS = 50;
 const EXCLUDED_INBOX_CATEGORIES = [
   "CATEGORY_SPAM",
   "CATEGORY_SOCIAL",
@@ -58,6 +60,8 @@ You must use one of the provided tools for every turn. Do not answer in freeform
 
 Guidelines:
 - You may search past mailbox history when a draft would benefit from more context.
+- When a thread is about scheduling or meeting coordination, inspect the calendar before proposing times.
+- Prefer concrete alternatives that are actually open on the calendar instead of suggesting speculative availability.
 - Prefer targeted searches over broad searches.
 - Use sent-mail history to learn the user's tone, style, and how they answered similar messages.
 - Use mailbox searches to find similar requests, prior answers, or sender-specific context.
@@ -94,6 +98,32 @@ const AGENT_FUNCTION_DECLARATIONS: GeminiFunctionDeclaration[] = [
         reason: { type: Type.STRING, description: "Short reason for reading the thread." },
       },
       required: ["threadId", "reason"],
+    },
+  },
+  {
+    name: "check_calendar_availability",
+    description:
+      "Read the user's calendar within a bounded time window and return both matching events and open slots.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        start: { type: Type.STRING, description: "Window start as an ISO 8601 datetime." },
+        end: { type: Type.STRING, description: "Window end as an ISO 8601 datetime." },
+        calendarId: {
+          type: Type.STRING,
+          description: "Calendar ID to inspect. Use 'primary' unless there is a clear reason not to.",
+        },
+        query: {
+          type: Type.STRING,
+          description: "Optional text filter for calendar events in that window.",
+        },
+        maxResults: {
+          type: Type.NUMBER,
+          description: "Maximum events to inspect before summarizing the result.",
+        },
+        reason: { type: Type.STRING, description: "Short reason for checking the calendar." },
+      },
+      required: ["start", "end", "reason"],
     },
   },
   {
@@ -280,6 +310,38 @@ type AgentAttachmentReference = {
 type AgentMailboxMessage = AgentMailboxSearchResult & {
   text: string;
   attachments: AgentAttachmentReference[];
+};
+
+type AgentCalendarEvent = {
+  id: string | null;
+  calendarId: string;
+  status: string | null;
+  summary: string | null;
+  description: string | null;
+  location: string | null;
+  organizer: string | null;
+  creator: string | null;
+  attendees: string[];
+  start: string | null;
+  end: string | null;
+  isAllDay: boolean;
+  transparency: string | null;
+  hangoutLink: string | null;
+};
+
+type AgentCalendarAvailabilitySlot = {
+  start: string;
+  end: string;
+  minutes: number;
+};
+
+type AgentCalendarAvailability = {
+  calendarId: string;
+  start: string;
+  end: string;
+  query: string | null;
+  events: AgentCalendarEvent[];
+  openSlots: AgentCalendarAvailabilitySlot[];
 };
 
 function deriveProcessingPreview(thread: Awaited<ReturnType<typeof readThreadForAgent>>) {
@@ -616,6 +678,31 @@ function summarizeMailboxMessageForPrompt(message: AgentMailboxMessage) {
   };
 }
 
+function summarizeCalendarAvailabilityForPrompt(result: AgentCalendarAvailability) {
+  return {
+    calendarId: result.calendarId,
+    start: result.start,
+    end: result.end,
+    query: result.query,
+    events: result.events.map((event) => ({
+      id: event.id,
+      status: event.status,
+      summary: trimAgentText(event.summary, 120),
+      description: trimAgentText(event.description, 240),
+      location: trimAgentText(event.location, 120),
+      organizer: event.organizer,
+      creator: event.creator,
+      attendees: event.attendees.slice(0, 6),
+      start: event.start,
+      end: event.end,
+      isAllDay: event.isAllDay,
+      transparency: event.transparency,
+      hangoutLink: event.hangoutLink,
+    })),
+    openSlots: result.openSlots,
+  };
+}
+
 function buildAgentStateSnapshot(params: {
   inspected: Set<string>;
   contextMessagesRead: Set<string>;
@@ -929,6 +1016,14 @@ async function fetchCandidatesWithOptions(
 
 function createAccountGmailClient(account: typeof gmailAccounts.$inferSelect) {
   return createGmailClient({
+    refreshToken: decryptSecret(account.refreshTokenEncrypted),
+    accessToken: account.accessTokenEncrypted ? decryptSecret(account.accessTokenEncrypted) : undefined,
+    expiryDate: account.tokenExpiresAt?.getTime(),
+  });
+}
+
+function createAccountCalendarClient(account: typeof gmailAccounts.$inferSelect) {
+  return createCalendarClient({
     refreshToken: decryptSecret(account.refreshTokenEncrypted),
     accessToken: account.accessTokenEncrypted ? decryptSecret(account.accessTokenEncrypted) : undefined,
     expiryDate: account.tokenExpiresAt?.getTime(),
@@ -1269,7 +1364,8 @@ export async function redoAutodraftThread(userId: string, threadId: string) {
         };
 
         const gmail = createAccountGmailClient(account);
-        const tools = createTracedAgentTools(gmail);
+        const calendar = createAccountCalendarClient(account);
+        const tools = createTracedAgentTools({ gmail, calendar });
 
         const result = await processCandidateThread({
           userId,
@@ -1462,6 +1558,184 @@ async function readThreadForAgent(gmail: ReturnType<typeof createGmailClient>, t
   };
 }
 
+function parseCalendarEventDateTime(input: { date?: string | null; dateTime?: string | null } | undefined) {
+  if (input?.dateTime) {
+    return {
+      iso: new Date(input.dateTime).toISOString(),
+      isAllDay: false,
+    };
+  }
+
+  if (input?.date) {
+    return {
+      iso: new Date(`${input.date}T00:00:00.000Z`).toISOString(),
+      isAllDay: true,
+    };
+  }
+
+  return {
+    iso: null,
+    isAllDay: false,
+  };
+}
+
+function clampCalendarWindow(start: string, end: string) {
+  const parsedStart = new Date(start);
+  const parsedEnd = new Date(end);
+
+  if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
+    throw new Error("Calendar availability checks require valid ISO 8601 start and end datetimes.");
+  }
+
+  if (parsedEnd <= parsedStart) {
+    throw new Error("Calendar availability checks require end to be after start.");
+  }
+
+  const maxEnd = new Date(
+    parsedStart.getTime() + MAX_AGENT_CALENDAR_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  return {
+    start: parsedStart,
+    end: parsedEnd > maxEnd ? maxEnd : parsedEnd,
+  };
+}
+
+function computeOpenCalendarSlots(params: {
+  start: Date;
+  end: Date;
+  events: AgentCalendarEvent[];
+}) {
+  const busyRanges = params.events
+    .filter((event) => event.transparency !== "transparent")
+    .flatMap((event) => {
+      if (!event.start || !event.end) {
+        return [];
+      }
+
+      const start = new Date(event.start);
+      const end = new Date(event.end);
+      if (end <= params.start || start >= params.end || end <= start) {
+        return [];
+      }
+
+      return [
+        {
+          start: start < params.start ? params.start : start,
+          end: end > params.end ? params.end : end,
+        },
+      ];
+    })
+    .sort((left, right) => left.start.getTime() - right.start.getTime());
+
+  const mergedBusyRanges: Array<{ start: Date; end: Date }> = [];
+  for (const range of busyRanges) {
+    const last = mergedBusyRanges.at(-1);
+    if (!last || range.start > last.end) {
+      mergedBusyRanges.push(range);
+      continue;
+    }
+
+    if (range.end > last.end) {
+      last.end = range.end;
+    }
+  }
+
+  const openSlots: AgentCalendarAvailabilitySlot[] = [];
+  let cursor = params.start;
+  for (const range of mergedBusyRanges) {
+    if (range.start > cursor) {
+      openSlots.push({
+        start: cursor.toISOString(),
+        end: range.start.toISOString(),
+        minutes: Math.round((range.start.getTime() - cursor.getTime()) / 60_000),
+      });
+    }
+
+    if (range.end > cursor) {
+      cursor = range.end;
+    }
+  }
+
+  if (cursor < params.end) {
+    openSlots.push({
+      start: cursor.toISOString(),
+      end: params.end.toISOString(),
+      minutes: Math.round((params.end.getTime() - cursor.getTime()) / 60_000),
+    });
+  }
+
+  return openSlots;
+}
+
+async function checkCalendarAvailabilityForAgent(
+  calendar: ReturnType<typeof createCalendarClient>,
+  params: {
+    start: string;
+    end: string;
+    calendarId?: string;
+    query?: string;
+    maxResults?: number;
+  },
+): Promise<AgentCalendarAvailability> {
+  const { start, end } = clampCalendarWindow(params.start, params.end);
+  const calendarId = params.calendarId?.trim() || "primary";
+  const query = params.query?.trim() || null;
+  const maxResults =
+    typeof params.maxResults === "number" && Number.isFinite(params.maxResults)
+      ? Math.max(1, Math.min(Math.floor(params.maxResults), MAX_AGENT_CALENDAR_EVENTS))
+      : MAX_AGENT_CALENDAR_EVENTS;
+
+  const response = await calendar.events.list({
+    calendarId,
+    timeMin: start.toISOString(),
+    timeMax: end.toISOString(),
+    singleEvents: true,
+    orderBy: "startTime",
+    q: query ?? undefined,
+    maxResults,
+    showDeleted: false,
+  });
+
+  const events = (response.data.items ?? [])
+    .filter((event) => event.status !== "cancelled")
+    .map((event) => {
+      const startInfo = parseCalendarEventDateTime(event.start);
+      const endInfo = parseCalendarEventDateTime(event.end);
+      return {
+        id: event.id ?? null,
+        calendarId,
+        status: event.status ?? null,
+        summary: event.summary ?? null,
+        description: event.description ?? null,
+        location: event.location ?? null,
+        organizer: event.organizer?.email ?? event.organizer?.displayName ?? null,
+        creator: event.creator?.email ?? event.creator?.displayName ?? null,
+        attendees:
+          event.attendees?.map((attendee) => attendee.email ?? attendee.displayName).filter(Boolean) as string[] ??
+          [],
+        start: startInfo.iso,
+        end: endInfo.iso,
+        isAllDay: startInfo.isAllDay || endInfo.isAllDay,
+        transparency: event.transparency ?? null,
+        hangoutLink: event.hangoutLink ?? null,
+      } satisfies AgentCalendarEvent;
+    });
+
+  return {
+    calendarId,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    query,
+    events,
+    openSlots: computeOpenCalendarSlots({
+      start,
+      end,
+      events,
+    }),
+  };
+}
+
 async function searchMailboxForAgent(
   gmail: ReturnType<typeof createGmailClient>,
   query: string,
@@ -1628,7 +1902,11 @@ async function fetchAttachmentForDraft(
   };
 }
 
-function createTracedAgentTools(gmail: ReturnType<typeof createGmailClient>) {
+function createTracedAgentTools(params: {
+  gmail: ReturnType<typeof createGmailClient>;
+  calendar: ReturnType<typeof createCalendarClient>;
+}) {
+  const { gmail, calendar } = params;
   return {
     readThread: traceableIfEnabled(
       async (threadId: string) => readThreadForAgent(gmail, threadId),
@@ -1638,6 +1916,23 @@ function createTracedAgentTools(gmail: ReturnType<typeof createGmailClient>) {
         tags: ["gmail-auto-responder", "agent", "gmail"],
         metadata: {
           tool: "read_thread",
+        },
+      },
+    ),
+    checkCalendarAvailability: traceableIfEnabled(
+      async (input: {
+        start: string;
+        end: string;
+        calendarId?: string;
+        query?: string;
+        maxResults?: number;
+      }) => checkCalendarAvailabilityForAgent(calendar, input),
+      {
+        name: "Check calendar availability",
+        run_type: "tool",
+        tags: ["gmail-auto-responder", "agent", "calendar"],
+        metadata: {
+          tool: "check_calendar_availability",
         },
       },
     ),
@@ -1683,12 +1978,28 @@ async function runAutonomousAgentImpl(params: {
   draftingRules: string[];
   candidates: Candidate[];
   readThread: (threadId: string) => ReturnType<typeof readThreadForAgent>;
+  checkCalendarAvailability: (input: {
+    start: string;
+    end: string;
+    calendarId?: string;
+    query?: string;
+    maxResults?: number;
+  }) => Promise<AgentCalendarAvailability>;
   searchMailbox: (query: string, maxResults: number) => Promise<AgentMailboxSearchResult[]>;
   searchAttachments: (query: string, maxResults: number) => Promise<AgentAttachmentReference[]>;
   readMessage: (messageId: string) => Promise<AgentMailboxMessage>;
 }) {
-  const { provider, model, draftingRules, candidates, readThread, searchMailbox, searchAttachments, readMessage } =
-    params;
+  const {
+    provider,
+    model,
+    draftingRules,
+    candidates,
+    readThread,
+    checkCalendarAvailability,
+    searchMailbox,
+    searchAttachments,
+    readMessage,
+  } = params;
   const inspected = new Set<string>();
   const contextMessagesRead = new Set<string>();
   const drafted = new Map<string, AgentDraftResult>();
@@ -1738,6 +2049,7 @@ async function runAutonomousAgentImpl(params: {
     } as {
       action:
         | "read_thread"
+        | "check_calendar_availability"
         | "search_mailbox"
         | "search_attachments"
         | "read_message"
@@ -1746,6 +2058,9 @@ async function runAutonomousAgentImpl(params: {
         | "finish";
       threadId?: string;
       messageId?: string;
+      start?: string;
+      end?: string;
+      calendarId?: string;
       query?: string;
       maxResults?: number;
       draft?: string;
@@ -1779,6 +2094,9 @@ async function runAutonomousAgentImpl(params: {
         action: action.action,
         threadId: action.threadId ?? null,
         messageId: action.messageId ?? null,
+        start: action.start ?? null,
+        end: action.end ?? null,
+        calendarId: action.calendarId ?? null,
         query: action.query ?? null,
         reason: action.reason,
       },
@@ -1863,6 +2181,91 @@ async function runAutonomousAgentImpl(params: {
           },
         ],
       });
+      continue;
+    }
+
+    if (action.action === "check_calendar_availability") {
+      const start = action.start?.trim();
+      const end = action.end?.trim();
+
+      if (!start || !end) {
+        conversation.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: "check_calendar_availability",
+                id: response.functionCall.id,
+                response: {
+                  ok: false,
+                  error: "Ignored invalid check_calendar_availability action without both start and end.",
+                  state: buildAgentStateSnapshot({
+                    inspected,
+                    contextMessagesRead,
+                    drafted,
+                    decisions,
+                  }),
+                },
+              },
+            },
+          ],
+        });
+        continue;
+      }
+
+      try {
+        const result = await checkCalendarAvailability({
+          start,
+          end,
+          calendarId: action.calendarId?.trim() || "primary",
+          query: action.query?.trim(),
+          maxResults: action.maxResults,
+        });
+        conversation.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: "check_calendar_availability",
+                id: response.functionCall.id,
+                response: {
+                  ok: true,
+                  reason: action.reason,
+                  result: summarizeCalendarAvailabilityForPrompt(result),
+                  state: buildAgentStateSnapshot({
+                    inspected,
+                    contextMessagesRead,
+                    drafted,
+                    decisions,
+                  }),
+                },
+              },
+            },
+          ],
+        });
+      } catch (error) {
+        conversation.push({
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: "check_calendar_availability",
+                id: response.functionCall.id,
+                response: {
+                  ok: false,
+                  error: error instanceof Error ? error.message : String(error),
+                  state: buildAgentStateSnapshot({
+                    inspected,
+                    contextMessagesRead,
+                    drafted,
+                    decisions,
+                  }),
+                },
+              },
+            },
+          ],
+        });
+      }
       continue;
     }
 
@@ -2478,6 +2881,7 @@ async function processCandidateThread(params: {
       candidates: [candidate],
       readThread: async (threadId: string) =>
         threadId === candidate.gmailThreadId ? prefetchedThread : tools.readThread(threadId),
+      checkCalendarAvailability: tools.checkCalendarAvailability,
       searchMailbox: tools.searchMailbox,
       searchAttachments: tools.searchAttachments,
       readMessage: tools.readMessage,
@@ -2768,7 +3172,8 @@ async function syncUserAccountUnlocked(
     const threadRecordByGmailThreadId = new Map(
       threadRecords.map((threadRecord) => [threadRecord.gmailThreadId, threadRecord]),
     );
-    const agentTools = createTracedAgentTools(gmail);
+    const calendar = createAccountCalendarClient(account);
+    const agentTools = createTracedAgentTools({ gmail, calendar });
 
     if (runType === "redo_autodraft" && threadRecords.length > 0) {
       await clearDraftRepliesForThreadIds(

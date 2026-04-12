@@ -78,7 +78,7 @@ describe("public routes", () => {
       refresh_token: "refresh-token",
       access_token: "access-token",
       expiry_date: Date.now() + 3_600_000,
-      scope: "gmail.readonly gmail.compose",
+      scope: "gmail.readonly gmail.compose calendar.readonly",
     });
     encryptSecret.mockImplementation((value: string) => `encrypted:${value}`);
     createGmailClient.mockReturnValue({
@@ -127,7 +127,7 @@ describe("public routes", () => {
     exchangeCodeForTokens.mockResolvedValue({
       access_token: "access-token",
       expiry_date: Date.now() + 3_600_000,
-      scope: "gmail.readonly gmail.compose",
+      scope: "gmail.readonly gmail.compose calendar.readonly",
     });
 
     const { createApp } = await import("../app.js");
