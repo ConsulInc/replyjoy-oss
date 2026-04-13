@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { Type } from "@google/genai";
 
 import { lookbackOptions } from "../config/agent-config.js";
@@ -43,6 +43,8 @@ const MAX_AGENT_ATTACHMENTS_PER_DRAFT = 3;
 const MAX_AGENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_AGENT_CALENDAR_WINDOW_DAYS = 14;
 const MAX_AGENT_CALENDAR_EVENTS = 50;
+const SYNC_RUN_RETENTION_DAYS = 7;
+const STALE_SYNC_RUN_ERROR_MESSAGE = "Sync was stale during retention cleanup.";
 const EXCLUDED_INBOX_CATEGORIES = [
   "CATEGORY_SPAM",
   "CATEGORY_SOCIAL",
@@ -3332,6 +3334,94 @@ export async function syncAllAccounts() {
       });
     }
   }
+}
+
+export async function cleanupOldSyncRuns() {
+  const retentionCutoff = new Date(
+    Date.now() - SYNC_RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const staleRuns = await db
+    .select({
+      id: syncRuns.id,
+      userId: syncRuns.userId,
+    })
+    .from(syncRuns)
+    .where(and(eq(syncRuns.status, "running"), lt(syncRuns.startedAt, retentionCutoff)));
+
+  if (staleRuns.length > 0) {
+    const staleRunIds = [...new Set(staleRuns.map((run) => run.id))];
+    const staleUserIds = [...new Set(staleRuns.map((run) => run.userId))];
+    const now = new Date();
+
+    await db
+      .update(syncRuns)
+      .set({
+        status: "failed",
+        errorMessage: STALE_SYNC_RUN_ERROR_MESSAGE,
+        finishedAt: now,
+      })
+      .where(and(eq(syncRuns.status, "running"), inArray(syncRuns.id, staleRunIds)));
+
+    await db
+      .update(gmailAccounts)
+      .set({
+        syncStatus: "error",
+        lastSyncError: STALE_SYNC_RUN_ERROR_MESSAGE,
+        lastSyncAttemptAt: now,
+      })
+      .where(inArray(gmailAccounts.userId, staleUserIds));
+
+    await db
+      .update(emailThreads)
+      .set({
+        selectionStatus: null,
+        selectionReason: null,
+      })
+      .where(
+        and(
+          inArray(emailThreads.userId, staleUserIds),
+          eq(emailThreads.selectionStatus, "processing"),
+        ),
+      );
+
+    logger.warn("Marked stale running sync runs as failed during retention cleanup", {
+      staleRunCount: staleRuns.length,
+      staleUserCount: staleUserIds.length,
+      staleRunIds,
+    });
+  }
+
+  const deletedRunsResult = await db.execute<{
+    deleted_count: string | number;
+  }>(sql`
+      WITH deleted_runs AS (
+        DELETE FROM sync_runs
+        WHERE started_at < ${retentionCutoff}
+          AND status <> 'running'
+        RETURNING id
+      )
+      SELECT count(*)::int AS deleted_count
+      FROM deleted_runs;
+    `);
+
+  const deletedRunCount = Number(deletedRunsResult?.[0]?.deleted_count ?? 0);
+
+  if (deletedRunCount > 0) {
+    logger.info("Deleted old sync runs", {
+      deletedRunCount,
+      retentionDays: SYNC_RUN_RETENTION_DAYS,
+      retentionCutoff: retentionCutoff.toISOString(),
+    });
+  } else {
+    logger.info("Sync run retention job did not delete any rows", {
+      retentionDays: SYNC_RUN_RETENTION_DAYS,
+    });
+  }
+
+  return {
+    staleRunCount: staleRuns.length,
+    deletedRunCount,
+  };
 }
 
 export async function listRecentDrafts(userId: string) {
