@@ -9,6 +9,7 @@ import {
   Inbox,
   LoaderCircle,
   RefreshCcw,
+  Save,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -18,6 +19,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Select } from "../components/ui/select";
 import { StatusBanner } from "../components/ui/status-banner";
+import { Textarea } from "../components/ui/textarea";
 import { lookbackOptions } from "../lib/agent-config";
 import {
   type EntitlementState,
@@ -288,6 +290,44 @@ function BillingRequiredDashboard() {
   );
 }
 
+function PersonalizationCard({
+  draftingRulesInput,
+  setDraftingRulesInput,
+  onSave,
+  savePending,
+}: {
+  draftingRulesInput: string;
+  setDraftingRulesInput: (value: string) => void;
+  onSave: () => void;
+  savePending: boolean;
+}) {
+  return (
+    <Card className="space-y-5 p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+            Personalization
+          </p>
+          <h2 className="mt-2 text-lg font-semibold text-foreground">Custom instructions</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Short, plain-English rules for the drafting agent. Changes apply to the next sync and
+            redo run.
+          </p>
+        </div>
+        <Button onClick={onSave} disabled={savePending}>
+          <Save className="mr-2 h-4 w-4" />
+          {savePending ? "Saving..." : "Save instructions"}
+        </Button>
+      </div>
+      <Textarea
+        aria-label="Custom instructions"
+        value={draftingRulesInput}
+        onChange={(event) => setDraftingRulesInput(event.target.value)}
+      />
+    </Card>
+  );
+}
+
 function ConnectedDashboard({
   gmail,
   accessState,
@@ -303,6 +343,10 @@ function ConnectedDashboard({
   clearPending,
   advancedOpen,
   setAdvancedOpen,
+  draftingRulesInput,
+  setDraftingRulesInput,
+  onSaveDraftingRules,
+  saveDraftingRulesPending,
 }: {
   gmail: GmailStatus;
   accessState?: Pick<EntitlementState, "billingEnabled" | "hasAccess"> | null;
@@ -318,6 +362,10 @@ function ConnectedDashboard({
   setAdvancedOpen: (open: boolean) => void;
   syncProgress: SyncProgress | null;
   processingThreadCount: number;
+  draftingRulesInput: string;
+  setDraftingRulesInput: (value: string) => void;
+  onSaveDraftingRules: () => void;
+  saveDraftingRulesPending: boolean;
 }) {
   const isProcessing = Boolean(
     syncProgress &&
@@ -565,6 +613,13 @@ function ConnectedDashboard({
         />
       ) : null}
 
+      <PersonalizationCard
+        draftingRulesInput={draftingRulesInput}
+        setDraftingRulesInput={setDraftingRulesInput}
+        onSave={onSaveDraftingRules}
+        savePending={saveDraftingRulesPending}
+      />
+
         <DraftWorkspace accessState={accessState} />
     </div>
   );
@@ -577,6 +632,7 @@ function DashboardContent() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lookback, setLookback] = useState<UserSettings["initialAutodraftLookback"]>("1d");
   const [initialChoiceDismissed, setInitialChoiceDismissed] = useState(false);
+  const [draftingRulesInput, setDraftingRulesInput] = useState("");
 
   useEffect(() => {
     if (!flash || flash.tone !== "success") {
@@ -629,6 +685,12 @@ function DashboardContent() {
       setLookback(settingsQuery.data.settings.initialAutodraftLookback);
     }
   }, [settingsQuery.data?.settings?.initialAutodraftLookback]);
+
+  useEffect(() => {
+    if (settingsQuery.data?.settings?.draftingRules) {
+      setDraftingRulesInput(settingsQuery.data.settings.draftingRules.join("\n"));
+    }
+  }, [settingsQuery.data?.settings?.draftingRules]);
 
   useEffect(() => {
     if (!gmailStatusQuery.data?.gmail?.connected) {
@@ -783,6 +845,36 @@ function DashboardContent() {
     },
   });
 
+  const saveDraftingRulesMutation = useMutation({
+    mutationFn: async () => {
+      const currentSettings = settingsQuery.data?.settings;
+      if (!currentSettings) {
+        throw new Error("Settings are still loading.");
+      }
+      const nextRules = draftingRulesInput
+        .split("\n")
+        .map((rule) => rule.trim())
+        .filter((rule) => rule.length > 0);
+      return fetcher<{ settings: UserSettings }>("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...currentSettings,
+          draftingRules: nextRules,
+        }),
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      setFlash({ tone: "success", message: "Custom instructions saved." });
+    },
+    onError: (error) => {
+      setFlash({
+        tone: "error",
+        message: formatDashboardActionError(error, "Could not save custom instructions."),
+      });
+    },
+  });
+
   const redoMutation = useMutation({
     mutationFn: async () => {
       const settings = settingsQuery.data?.settings;
@@ -900,6 +992,10 @@ function DashboardContent() {
           clearPending={clearMutation.isPending}
           advancedOpen={advancedOpen}
           setAdvancedOpen={setAdvancedOpen}
+          draftingRulesInput={draftingRulesInput}
+          setDraftingRulesInput={setDraftingRulesInput}
+          onSaveDraftingRules={() => saveDraftingRulesMutation.mutate()}
+          saveDraftingRulesPending={saveDraftingRulesMutation.isPending}
         />
       )}
     </>
