@@ -1,16 +1,12 @@
 # ReplyJoy
 
-> An autonomous Gmail draft agent. ReplyJoy reads your inbox, decides which threads
-> deserve a reply, and writes the draft directly back into Gmail — so the draft is
-> waiting for you in the thread when you open it.
+**An autonomous Gmail draft agent.** ReplyJoy reads your inbox, decides which threads deserve a reply, and writes the draft directly back into Gmail — so the draft is waiting for you in the thread when you open it.
 
-ReplyJoy is intentionally small. It does one thing, and Gmail stays the source of
-truth: drafts live in Gmail, not in a separate UI you have to babysit.
+ReplyJoy is intentionally small. It does one thing, and Gmail stays the source of truth: drafts live in Gmail, not in a separate UI you have to babysit.
 
 - **Self-hostable.** Bring your own Gmail OAuth app, Clerk tenant, and Gemini key.
 - **Inspectable.** TypeScript end-to-end, one Express server, one Vite frontend.
-- **Extensible.** A small commercial-module interface lets you bolt on billing or
-  other private features without forking.
+- **Minimal.** No dashboards to babysit, no separate draft store — Gmail is the UI.
 
 <!-- TODO: add a screenshot of the drafts dashboard here -->
 
@@ -111,36 +107,16 @@ backend/src
 ├── routes/       Express routers (public + protected)
 ├── gmail/        Gmail/Calendar client + MIME helpers
 ├── services/
-│   ├── gmail-sync.ts        The agent loop
-│   ├── model-client.ts      Gemini wrapper with retries
-│   └── entitlements.ts      Pluggable access/billing interface
+│   ├── gmail-sync.ts     The agent loop
+│   └── model-client.ts   Gemini wrapper with retries
 ├── db/           Drizzle schema, client, migrations bootstrap
-├── lib/          crypto, env, ids, logger, langsmith
-└── commercial/   Loader + interface for private modules
+└── lib/          crypto, env, ids, logger, langsmith
 ```
 
 A single sync timer in `backend/src/index.ts` fires every 60 seconds and walks
 all connected accounts. Each account's run scans recent threads, processes them
 through a small worker pool, and persists the results into `email_threads`,
 `draft_replies`, and `thread_run_results`.
-
----
-
-## Commercial extensions
-
-ReplyJoy is structured so that proprietary features (billing, plan gating, etc.)
-can be added without forking the core. The backend looks for two optional env
-vars:
-
-- `COMMERCIAL_MODULE_PATH` — a module exporting `createCommercialModule(context)`.
-  It can register pre-JSON middleware (e.g. Stripe webhooks needing a raw body),
-  a protected sub-router, and a custom `EntitlementsService`.
-- `COMMERCIAL_MIGRATIONS_PATH` — an additional Drizzle migrations folder applied
-  on startup, after the OSS migrations.
-
-The frontend exposes the same hook through the `@replyjoy/commercial-frontend`
-Vite alias. When neither is set, ReplyJoy runs in OSS mode with all features
-unlocked.
 
 ---
 
