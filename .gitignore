@@ -15,3 +15,6 @@ backend/dist
 backend/data
 *.db
 *.db-journal
+# vitest creates this empty file from the file::memory: URL
+:memory:
+**/:memory:
