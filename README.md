@@ -2,7 +2,7 @@
 
 **An autonomous Gmail draft agent.** ReplyJoy reads your inbox, decides which threads deserve a reply, and writes the draft directly back into Gmail — so the draft is waiting for you in the thread when you open it.
 
-Before drafting, the agent reads your sent mail to learn your voice, searches prior threads for the facts it needs (so it doesn't fabricate dates, names, or commitments), and checks your Google Calendar before proposing meeting times. You can give it custom drafting rules — *"never commit to specific times"*, *"sign off as Derek"*, *"keep replies under three sentences"* — that it follows on every run.
+Before drafting, the agent reads your sent mail to learn your voice, searches prior threads for the facts it needs (so it doesn't fabricate dates, names, or commitments), and checks your Google Calendar before proposing meeting times. You can give it custom drafting rules — *"warm and informal, never corporate"*, *"keep replies under three sentences"*, *"use British English spelling"* — that it follows on every run.
 
 ReplyJoy is intentionally small. It does one thing, and Gmail stays the source of truth: drafts live in Gmail, not in a separate UI you have to babysit.
 
@@ -32,7 +32,7 @@ ReplyJoy is intentionally small. It does one thing, and Gmail stays the source o
 
 Once you've connected Gmail, the dashboard exposes a small set of controls:
 
-- **Drafting rules.** Free-text instructions the agent applies to every draft. Useful for tone (*"warm and informal"*), constraints (*"never commit to specific meeting times"*), formatting (*"sign off as Derek, not Derek Bai"*), or language (*"reply in German if the sender wrote in German"*). Each rule is appended to the agent's system prompt at draft time. Add or remove rules at any time — changes take effect on the next sync.
+- **Drafting rules.** Free-text instructions the agent applies to every draft. Useful for tone (*"warm and informal"*), constraints (*"always offer two specific meeting times, never just 'let me know'"*), formatting (*"sign off with first name only"*), or language (*"reply in the same language as the sender"*). Each rule is appended to the agent's system prompt at draft time. Add or remove rules at any time — changes take effect on the next sync.
 - **Initial lookback.** When you first connect Gmail, choose how far back to backfill drafts: anywhere from 1 to 5 days of recent threads.
 - **Autodraft on/off.** Pause draft generation entirely without disconnecting Gmail (e.g. while on vacation), then flip it back on when you want the agent running again.
 - **Model.** Switch the underlying Gemini model. The OSS build defaults to `gemini-3-flash-preview`.
