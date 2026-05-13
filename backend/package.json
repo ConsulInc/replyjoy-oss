@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
     "test": "vitest run"
   },
   "dependencies": {
@@ -20,7 +21,7 @@
     "express": "^4.21.2",
     "googleapis": "^144.0.0",
     "langsmith": "^0.5.16",
-    "postgres": "^3.4.5",
+    "@libsql/client": "^0.14.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

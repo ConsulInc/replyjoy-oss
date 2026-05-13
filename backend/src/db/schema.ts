@@ -1,60 +1,57 @@
-import { relations, sql } from "drizzle-orm";
+import { relations } from "drizzle-orm";
 import {
-  boolean,
-  jsonb,
-  numeric,
-  pgEnum,
-  pgTable,
+  integer,
   primaryKey,
+  real,
+  sqliteTable,
   text,
-  timestamp,
-} from "drizzle-orm/pg-core";
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
-export const providerEnum = pgEnum("agent_provider", ["gemini"]);
-export const lookbackEnum = pgEnum("initial_autodraft_lookback", [
-  "1d",
-  "2d",
-  "3d",
-  "4d",
-  "5d",
-]);
+const providerOptions = ["gemini"] as const;
+const lookbackOptions = ["1d", "2d", "3d", "4d", "5d"] as const;
 
-export const users = pgTable("users", {
+const timestampMs = (name: string) => integer(name, { mode: "timestamp_ms" });
+const boolFlag = (name: string) => integer(name, { mode: "boolean" });
+
+export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   clerkUserId: text("clerk_user_id").notNull().unique(),
   email: text("email"),
   firstName: text("first_name"),
   lastName: text("last_name"),
   avatarUrl: text("avatar_url"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
+  createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
+  updatedAt: timestampMs("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdate(() => new Date()),
 });
 
-export const userSettings = pgTable("user_settings", {
+export const userSettings = sqliteTable("user_settings", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" })
     .unique(),
-  draftingRules: jsonb("drafting_rules")
+  draftingRules: text("drafting_rules", { mode: "json" })
     .$type<string[]>()
     .notNull()
-    .default(sql`'[]'::jsonb`),
-  agentProvider: providerEnum("agent_provider").notNull().default("gemini"),
+    .$defaultFn(() => []),
+  agentProvider: text("agent_provider", { enum: providerOptions }).notNull().default("gemini"),
   agentModel: text("agent_model").notNull().default("gemini-3-flash-preview"),
-  initialAutodraftLookback: lookbackEnum("initial_autodraft_lookback").notNull().default("1d"),
-  autodraftEnabled: boolean("autodraft_enabled").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
+  initialAutodraftLookback: text("initial_autodraft_lookback", { enum: lookbackOptions })
+    .notNull()
+    .default("1d"),
+  autodraftEnabled: boolFlag("autodraft_enabled").notNull().default(true),
+  createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
+  updatedAt: timestampMs("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdate(() => new Date()),
 });
 
-export const gmailAccounts = pgTable("gmail_accounts", {
+export const gmailAccounts = sqliteTable("gmail_accounts", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
@@ -65,24 +62,24 @@ export const gmailAccounts = pgTable("gmail_accounts", {
   lastHistoryId: text("last_history_id"),
   refreshTokenEncrypted: text("refresh_token_encrypted").notNull(),
   accessTokenEncrypted: text("access_token_encrypted"),
-  tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+  tokenExpiresAt: timestampMs("token_expires_at"),
   scopes: text("scopes"),
-  connectedAt: timestamp("connected_at", { withTimezone: true }).defaultNow().notNull(),
+  connectedAt: timestampMs("connected_at").notNull().$defaultFn(() => new Date()),
   syncStatus: text("sync_status").default("connected"),
   lastSyncError: text("last_sync_error"),
-  initialSyncStartedAt: timestamp("initial_sync_started_at", { withTimezone: true }),
-  initialSyncCompletedAt: timestamp("initial_sync_completed_at", { withTimezone: true }),
-  lastSuccessfulSyncAt: timestamp("last_successful_sync_at", { withTimezone: true }),
-  lastSyncAttemptAt: timestamp("last_sync_attempt_at", { withTimezone: true }),
-  lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
+  initialSyncStartedAt: timestampMs("initial_sync_started_at"),
+  initialSyncCompletedAt: timestampMs("initial_sync_completed_at"),
+  lastSuccessfulSyncAt: timestampMs("last_successful_sync_at"),
+  lastSyncAttemptAt: timestampMs("last_sync_attempt_at"),
+  lastPolledAt: timestampMs("last_polled_at"),
+  createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
+  updatedAt: timestampMs("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdate(() => new Date()),
 });
 
-export const emailThreads = pgTable(
+export const emailThreads = sqliteTable(
   "email_threads",
   {
     id: text("id").primaryKey(),
@@ -95,30 +92,33 @@ export const emailThreads = pgTable(
     snippet: text("snippet"),
     fromEmail: text("from_email"),
     fromName: text("from_name"),
-    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
-    hasUnread: boolean("has_unread").default(false),
-    inPrimary: boolean("in_primary").default(true),
+    lastMessageAt: timestampMs("last_message_at"),
+    hasUnread: boolFlag("has_unread").default(false),
+    inPrimary: boolFlag("in_primary").default(true),
     selectionStatus: text("selection_status"),
     selectionReason: text("selection_reason"),
     latestMessageId: text("latest_message_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .$onUpdate(() => new Date())
-      .notNull(),
+    createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
+    updatedAt: timestampMs("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdate(() => new Date()),
   },
   (table) => ({
-    userThreadUnique: primaryKey({ columns: [table.userId, table.gmailThreadId] }),
+    userThreadUnique: uniqueIndex("email_threads_user_thread_unique").on(
+      table.userId,
+      table.gmailThreadId,
+    ),
   }),
 );
 
-export const emailMessages = pgTable("email_messages", {
+export const emailMessages = sqliteTable("email_messages", {
   id: text("id").primaryKey(),
   threadId: text("thread_id")
     .notNull()
     .references(() => emailThreads.id, { onDelete: "cascade" }),
   gmailMessageId: text("gmail_message_id").notNull().unique(),
-  gmailInternalDate: timestamp("gmail_internal_date", { withTimezone: true }),
+  gmailInternalDate: timestampMs("gmail_internal_date"),
   direction: text("direction"),
   fromEmail: text("from_email"),
   toEmails: text("to_emails"),
@@ -126,12 +126,12 @@ export const emailMessages = pgTable("email_messages", {
   subject: text("subject"),
   textBody: text("text_body"),
   htmlBody: text("html_body"),
-  headersJson: jsonb("headers_json").$type<Record<string, string>>(),
-  bodyLoaded: boolean("body_loaded").default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  headersJson: text("headers_json", { mode: "json" }).$type<Record<string, string>>(),
+  bodyLoaded: boolFlag("body_loaded").default(false),
+  createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
 });
 
-export const draftReplies = pgTable("draft_replies", {
+export const draftReplies = sqliteTable("draft_replies", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
@@ -141,42 +141,44 @@ export const draftReplies = pgTable("draft_replies", {
     .references(() => emailThreads.id, { onDelete: "cascade" }),
   gmailDraftId: text("gmail_draft_id"),
   status: text("status").notNull().default("drafted"),
-  decisionProvider: providerEnum("decision_provider"),
+  decisionProvider: text("decision_provider", { enum: providerOptions }),
   decisionModel: text("decision_model"),
-  generationProvider: providerEnum("generation_provider"),
+  generationProvider: text("generation_provider", { enum: providerOptions }),
   generationModel: text("generation_model"),
   autodraftBatchId: text("autodraft_batch_id"),
-  selectionContextJson: jsonb("selection_context_json").$type<Record<string, unknown>>(),
+  selectionContextJson: text("selection_context_json", { mode: "json" }).$type<
+    Record<string, unknown>
+  >(),
   generatedText: text("generated_text").notNull(),
   sourceMessageId: text("source_message_id"),
-  generatedAt: timestamp("generated_at", { withTimezone: true }).defaultNow().notNull(),
-  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .$onUpdate(() => new Date())
-    .notNull(),
+  generatedAt: timestampMs("generated_at").notNull().$defaultFn(() => new Date()),
+  lastSyncedAt: timestampMs("last_synced_at"),
+  createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
+  updatedAt: timestampMs("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdate(() => new Date()),
 });
 
-export const syncRuns = pgTable("sync_runs", {
+export const syncRuns = sqliteTable("sync_runs", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   runType: text("run_type").notNull(),
-  windowStart: timestamp("window_start", { withTimezone: true }),
-  windowEnd: timestamp("window_end", { withTimezone: true }),
+  windowStart: timestampMs("window_start"),
+  windowEnd: timestampMs("window_end"),
   status: text("status").notNull().default("pending"),
-  threadsScanned: text("threads_scanned").default(sql`'0'`),
-  threadsSelected: text("threads_selected").default(sql`'0'`),
-  draftsCreated: text("drafts_created").default(sql`'0'`),
-  totalCostUsd: numeric("total_cost_usd", { precision: 12, scale: 8 }).notNull().default("0"),
+  threadsScanned: text("threads_scanned").default("0"),
+  threadsSelected: text("threads_selected").default("0"),
+  draftsCreated: text("drafts_created").default("0"),
+  totalCostUsd: real("total_cost_usd").notNull().default(0),
   errorMessage: text("error_message"),
-  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
-  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  startedAt: timestampMs("started_at").notNull().$defaultFn(() => new Date()),
+  finishedAt: timestampMs("finished_at"),
 });
 
-export const threadRunResults = pgTable(
+export const threadRunResults = sqliteTable(
   "thread_run_results",
   {
     syncRunId: text("sync_run_id")
@@ -187,8 +189,8 @@ export const threadRunResults = pgTable(
       .references(() => emailThreads.id, { onDelete: "cascade" }),
     decision: text("decision").notNull(),
     reason: text("reason"),
-    costUsd: numeric("cost_usd", { precision: 12, scale: 8 }).notNull().default("0"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    costUsd: real("cost_usd").notNull().default(0),
+    createdAt: timestampMs("created_at").notNull().$defaultFn(() => new Date()),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.syncRunId, table.threadId] }),

@@ -12,3 +12,6 @@ coverage
 *.tsbuildinfo
 frontend/dist
 backend/dist
+backend/data
+*.db
+*.db-journal

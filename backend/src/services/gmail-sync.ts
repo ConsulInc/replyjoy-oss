@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { Type } from "@google/genai";
 
 import { lookbackOptions } from "../config/agent-config.js";
@@ -24,7 +24,6 @@ import {
   type GeminiContent,
   type GeminiFunctionDeclaration,
 } from "./model-client.js";
-import { formatCostUsd } from "./model-pricing.js";
 import { normalizeAgentModel } from "../config/agent-config.js";
 
 const activeSyncs = new Set<string>();
@@ -1391,7 +1390,7 @@ export async function redoAutodraftThread(userId: string, threadId: string) {
             threadsScanned: "1",
             threadsSelected: "1",
             draftsCreated: String(result.drafted ? 1 : 0),
-            totalCostUsd: formatCostUsd(result.costUsd),
+            totalCostUsd: result.costUsd,
             finishedAt: new Date(),
           })
           .where(eq(syncRuns.id, runId));
@@ -3025,7 +3024,7 @@ async function processCandidateThread(params: {
       threadId: threadRecord.id,
       decision: draftedResult ? "drafted" : "skipped",
       reason: threadResult.reason,
-      costUsd: formatCostUsd(threadResult.costUsd),
+      costUsd: threadResult.costUsd,
     });
 
     return {
@@ -3048,7 +3047,7 @@ async function processCandidateThread(params: {
       threadId: threadRecord.id,
       decision: "error",
       reason: errorMessage,
-      costUsd: formatCostUsd(0),
+      costUsd: 0,
     });
 
     logger.error("Thread processing failed", {
@@ -3257,7 +3256,7 @@ async function syncUserAccountUnlocked(
         threadsScanned: String(candidates.length),
         threadsSelected: String(candidates.length),
         draftsCreated: String(draftsCreated),
-        totalCostUsd: formatCostUsd(totalCostUsd),
+        totalCostUsd: totalCostUsd,
         finishedAt: new Date(),
       })
       .where(eq(syncRuns.id, runId));
@@ -3392,20 +3391,12 @@ export async function cleanupOldSyncRuns() {
     });
   }
 
-  const deletedRunsResult = await db.execute<{
-    deleted_count: string | number;
-  }>(sql`
-      WITH deleted_runs AS (
-        DELETE FROM sync_runs
-        WHERE started_at < ${retentionCutoff}
-          AND status <> 'running'
-        RETURNING id
-      )
-      SELECT count(*)::int AS deleted_count
-      FROM deleted_runs;
-    `);
+  const deletedRows = await db
+    .delete(syncRuns)
+    .where(and(lt(syncRuns.startedAt, retentionCutoff), ne(syncRuns.status, "running")))
+    .returning({ id: syncRuns.id });
 
-  const deletedRunCount = Number(deletedRunsResult?.[0]?.deleted_count ?? 0);
+  const deletedRunCount = deletedRows.length;
 
   if (deletedRunCount > 0) {
     logger.info("Deleted old sync runs", {

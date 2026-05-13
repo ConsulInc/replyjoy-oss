@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { migrate } from "drizzle-orm/libsql/migrator";
 
 import { env } from "../lib/env.js";
 import { db } from "./client.js";
